@@ -3,7 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import XPBar from '@/components/ui/XPBar';
+import XpBar from '@/components/ui/XpBar';
 
 export default function TeamDetail() {
   const { id } = useParams();
@@ -68,7 +68,7 @@ export default function TeamDetail() {
                   {player.status}
                 </span>
                 <div className="w-32 hidden sm:block">
-                  <XPBar xp={player.xp || 0} showLabel={false} />
+                  <XpBar xp={player.xp || 0} showLabel={false} />
                 </div>
               </div>
             ))}

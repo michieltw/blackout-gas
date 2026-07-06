@@ -1,7 +1,7 @@
 import React from 'react';
 import { Play, Pause, SkipForward } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { formatGameTime } from '@/lib/gameHelpers';
+import { formatGameTime } from '@/lib/gameHelper';
 
 export default function GameClock({ timeRemaining, period, isRunning, onToggle, onNextPeriod }) {
   return (

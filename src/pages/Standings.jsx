@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Trophy, Target } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { calculateStandings, calculatePlayerStats } from '@/lib/gameHelpers';
+import { calculateStandings, calculatePlayerStats } from '@/lib/gameHelper';
 
 export default function Standings() {
   const [games, setGames] = useState([]);

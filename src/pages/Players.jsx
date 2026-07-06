@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Users, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import XPBar from '@/components/ui/XPBar';
+import XpBar from '@/components/ui/XpBar';
 
 export default function Players() {
   const [players, setPlayers] = useState([]);
@@ -68,7 +68,7 @@ export default function Players() {
                     <p className="text-xs text-muted-foreground">{player.position} · {team?.short_name || team?.name || 'Free Agent'}</p>
                   </div>
                 </div>
-                <XPBar xp={player.xp || 0} />
+                <XpBar xp={player.xp || 0} />
               </div>
             );
           })}

@@ -6,8 +6,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/components/ui/use-toast';
 import { sendRsvpEmail } from '@/lib/emailNotifications';
 import StatCard from '@/components/ui/StatCard';
-import XPBar from '@/components/ui/XPBar';
-import { calculatePlayerStats } from '@/lib/gameHelpers';
+import XpBar from '@/components/ui/XpBar';
+import { calculatePlayerStats } from '@/lib/gameHelper';
 import { getLevel, LEVEL_NAMES } from '@/lib/xp';
 
 export default function Profile() {
@@ -103,7 +103,7 @@ export default function Profile() {
             <div className="flex items-center gap-3 mb-2">
               <span className="text-sm font-bold text-primary">Level {level} — {LEVEL_NAMES[level]}</span>
             </div>
-            <XPBar xp={player.xp || 0} />
+            <XpBar xp={player.xp || 0} />
           </div>
         )}
       </div>

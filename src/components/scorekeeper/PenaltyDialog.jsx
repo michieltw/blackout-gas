@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import PlayerTiles from '@/components/scorekeeper/PlayerTiles';
+import PenaltyTiles from '@/components/scorekeeper/PenaltyTiles';
 
 const PENALTY_TYPES = ['Tripping', 'Hooking', 'Slashing', 'Roughing', 'Holding', 'Interference', 'Cross-checking', 'High-sticking', 'Boarding', 'Unsportsmanlike', 'Delay of Game', 'Too Many Men', 'Other'];
 
@@ -37,7 +37,7 @@ export default function PenaltyDialog({ open, onClose, teamPlayers, teamName, on
         </DialogHeader>
 
         <div className="space-y-4">
-          <PlayerTiles
+          <PenaltyTiles
             label="Penalized Player"
             players={teamPlayers}
             selectedIds={player}

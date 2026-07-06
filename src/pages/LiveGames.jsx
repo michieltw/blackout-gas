@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { Timer, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import LiveBadge from '@/components/ui/LiveBadge';
-import { formatGameTime } from '@/lib/gameHelpers';
+import { formatGameTime } from '@/lib/gameHelper';
 
 export default function LiveGames() {
   const [games, setGames] = useState([]);

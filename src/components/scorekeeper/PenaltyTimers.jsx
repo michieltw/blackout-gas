@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatGameTime } from '@/lib/gameHelpers';
+import { formatGameTime } from '@/lib/gameHelper';
 
 export default function PenaltyTimers({ penalties, players, currentPeriod, timeRemaining }) {
   const active = penalties.filter(p => {

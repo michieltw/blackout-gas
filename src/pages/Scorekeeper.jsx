@@ -8,13 +8,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { useToast } from '@/components/ui/use-toast';
 import IceRink from '@/components/scorekeeper/IceRink';
 import GameClock from '@/components/scorekeeper/GameClock';
-import PlayerTiles from '@/components/scorekeeper/PlayerTiles';
+import PenaltyTiles from '@/components/scorekeeper/PenaltyTiles';
 import PenaltyTimers from '@/components/scorekeeper/PenaltyTimers';
 import EventLog from '@/components/scorekeeper/EventLog';
 import GoalDialog from '@/components/scorekeeper/GoalDialog';
 import PenaltyDialog from '@/components/scorekeeper/PenaltyDialog';
 import LiveBadge from '@/components/ui/LiveBadge';
-import { formatGameTime, determineGoalType } from '@/lib/gameHelpers';
+import { formatGameTime, determineGoalType } from '@/lib/gameHelper';
 import { snakeDraft } from '@/lib/xp';
 
 export default function Scorekeeper() {

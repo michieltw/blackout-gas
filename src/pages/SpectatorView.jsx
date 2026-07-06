@@ -4,7 +4,7 @@ import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import LiveBadge from '@/components/ui/LiveBadge';
-import { formatGameTime } from '@/lib/gameHelpers';
+import { formatGameTime } from '@/lib/gameHelper';
 
 export default function SpectatorView() {
   const { id } = useParams();
