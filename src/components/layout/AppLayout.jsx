@@ -1,11 +1,9 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
 import { 
   LayoutDashboard, Trophy, Users, Calendar, Timer, Shield, 
-  ChevronLeft, ChevronRight, LogOut, User, Menu, X
+  ChevronLeft, ChevronRight, User, Menu
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 
 const navItems = [
   { label: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -25,10 +23,6 @@ export default function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
-
-  const handleLogout = () => {
-    base44.auth.logout('/login');
-  };
 
   const NavLink = ({ item }) => {
     const active = location.pathname === item.path;
@@ -90,13 +84,6 @@ export default function AppLayout() {
             <User className="w-5 h-5 shrink-0" />
             {!collapsed && <span>My Profile</span>}
           </Link>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-muted-foreground hover:text-red-400 hover:bg-red-400/10 transition-all w-full"
-          >
-            <LogOut className="w-5 h-5 shrink-0" />
-            {!collapsed && <span>Logout</span>}
-          </button>
           <button
             onClick={() => setCollapsed(!collapsed)}
             className="hidden lg:flex items-center justify-center w-full py-2 text-muted-foreground hover:text-foreground transition-all"
