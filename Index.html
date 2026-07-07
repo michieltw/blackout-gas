@@ -113,32 +113,44 @@
         // ==========================================
         const IS_GAS = typeof google !== 'undefined' && google.script && google.script.run;
         var CurrentUser = window.CurrentUser || { email: '', role: 'Guest', isAdmin: false, isScorekeeper: false };
-        var AppState = { currentView: 'dashboard', currentParams: null, currentLeagueId: null, leagues: [], sort: { key: '', dir: 1 } };
+        var AppState = { currentView: 'dashboard', currentParams: null, currentLeagueId: null, leagues: [], sort: { key: '', dir: 1 }, cachedStats: null };
         var MockData = window.MockData || { leagues: [], teams: [], players: [], games: [], events: [], divisions: [], gamesettings: [], rsvps: [] };
 
         var api = {
-            call: (func, data) => new Promise((resolve, reject) => {
+            call: (func, ...args) => new Promise((resolve, reject) => {
                 if (IS_GAS) {
                     google.script.run.withSuccessHandler(resolve).withFailureHandler(err => {
                         Toast.show(err.message, 'error');
                         reject(err);
-                    })[func](data);
+                    })[func](...args);
                 } else {
                     setTimeout(() => {
-                        if (func === 'getUserInfo') return resolve({ email: 'dev@blackout.com', role: 'Admin', isAdmin: true, isScorekeeper: true });
+                        const data = args[0];
+                        if (func === 'getUserInfo') return resolve(window.CurrentUser || { email: 'dev@blackout.com', role: 'Admin', isAdmin: true, isScorekeeper: true });
+                        if (func === 'GameEvent_all') return resolve(MockData.events || []);
                         const entity = func.split('_')[0];
-                        let table = entity.toLowerCase() + (entity.toLowerCase().endsWith('y') ? 'ies' : 's');
-                        if (entity === 'GameEvent') table = 'events';
-                        if (entity === 'Player') table = 'players';
-                        if (entity === 'GameSetting') table = 'gamesettings';
-                        if (entity === 'RSVP') table = 'rsvps';
-
                         const action = func.split('_')[1];
-                        if (action === 'create') { data.id = 'n_' + Date.now(); MockData[table].push(data); return resolve(data); }
+                        const tMap = { 'GameEvent': 'events', 'Player': 'players', 'GameSetting': 'gamesettings', 'RSVP': 'rsvps', 'Game': 'games', 'Team': 'teams', 'League': 'leagues', 'Lineup': 'lineups', 'Season': 'seasons', 'User': 'users', 'Division': 'divisions' };
+                        let table = tMap[entity] || (entity.toLowerCase() + (entity.toLowerCase().endsWith('y') ? 'ies' : 's'));
+                        if (action === 'create' || action === 'save') {
+                            if (!data.id) data.id = 'n_' + Date.now();
+                            const existingIdx = (MockData[table]||[]).findIndex(i => (i.id && i.id === data.id) || (entity === 'Lineup' && i.game_id === data.game_id && i.team_id === data.team_id));
+                            if (existingIdx > -1) MockData[table][existingIdx] = {...MockData[table][existingIdx], ...data};
+                            else { if(!MockData[table]) MockData[table] = []; MockData[table].push(data); }
+                            return resolve(data);
+                        }
                         if (action === 'filter') { let res = MockData[table] || []; for(let k in data) res = res.filter(i => i[k] == data[k]); return resolve(res); }
-                        if (action === 'get') return resolve(MockData[table]?.find(i => i.id == data));
+                        if (action === 'get') {
+                            if (entity === 'Lineup') return resolve((MockData.lineups||[]).find(i => i.game_id === args[0] && i.team_id === args[1]));
+                            return resolve((MockData[table]||[]).find(i => i.id == data));
+                        }
+                        if (func === 'Admin_RecordDelete') {
+                            const t = tMap[args[0]] || args[0].toLowerCase() + 's';
+                            if(MockData[t]) MockData[t] = MockData[t].filter(i => i.id !== args[1]);
+                            return resolve({success:true});
+                        }
                         resolve(MockData[table] || []);
-                    }, 200);
+                    }, 100);
                 }
             })
         };
@@ -178,14 +190,24 @@
         // ==========================================
         // 3. CORE UI
         // ==========================================
+        async function loadLogo() {
+            try {
+                const leagues = await api.call('League_list');
+                const league = leagues.find(l => l.id === AppState.currentLeagueId);
+                // In real use, we might have a specific logo ID in the league object
+                // For now, we keep the fallback 'B' or try to load if LOGO_DRIVE_ID existed
+            } catch(e) {}
+        }
+
         async function initApp() {
-            CurrentUser = await api.call('getUserInfo');
-            const leagues = await api.call('League_list');
-            AppState.leagues = leagues;
-            const visible = leagues.filter(l => l.is_visible !== false);
-            if (!AppState.currentLeagueId) AppState.currentLeagueId = visible[0]?.id || leagues[0]?.id;
-            renderLeagueSwitchers();
-            navigate(AppState.currentView, AppState.currentParams);
+            try {
+                CurrentUser = await api.call('getUserInfo');
+                const leagues = await api.call('League_list');
+                AppState.leagues = leagues || [];
+                const visible = AppState.leagues.filter(l => l.is_visible !== false);
+                if (!AppState.currentLeagueId) AppState.currentLeagueId = visible[0]?.id || AppState.leagues[0]?.id;
+                renderLeagueSwitchers();
+            } catch(e) { console.error("Init failed", e); }
 
             if ('serviceWorker' in navigator) {
                 const swCode = `
@@ -201,6 +223,7 @@
                 const swUrl = URL.createObjectURL(blob);
                 navigator.serviceWorker.register(swUrl).catch(err => console.log('SW failed', err));
             }
+            setTimeout(() => navigate(AppState.currentView, AppState.currentParams), 150);
         }
 
         function renderLeagueSwitchers() {
@@ -210,32 +233,60 @@
             document.getElementById('mobile-league-switcher').innerHTML = options;
         }
 
-        function changeLeague(id) { AppState.currentLeagueId = id; renderLeagueSwitchers(); navigate(AppState.currentView); }
+        function changeLeague(id) { AppState.currentLeagueId = id; AppState.cachedStats = null; renderLeagueSwitchers(); navigate(AppState.currentView); }
 
         function renderNav() {
-            const menu = [
-                { id: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' },
-                { id: 'live', label: 'Live Games', icon: 'radio' },
-                { id: 'schedule', label: 'Schedule', icon: 'calendar' },
-                { id: 'standings', label: 'Standings', icon: 'trophy' },
-                { id: 'stats', label: 'Player Stats', icon: 'bar-chart-3' },
-                { id: 'bracket', label: 'Playoffs', icon: 'git-merge' },
-                { id: 'teams', label: 'Teams', icon: 'shield' },
-                { id: 'players', label: 'Directory', icon: 'users' }
+            const sections = [
+                { label: 'General', items: [
+                    { id: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' },
+                    { id: 'live', label: 'Live Games', icon: 'radio' },
+                    { id: 'schedule', label: 'Schedule', icon: 'calendar' },
+                    { id: 'archive', label: 'Archive', icon: 'archive' }
+                ]},
+                { label: 'Competition', items: [
+                    { id: 'standings', label: 'Standings', icon: 'trophy' },
+                    { id: 'stats', label: 'League Stats', icon: 'bar-chart-3' },
+                    { id: 'bracket', label: 'Playoffs', icon: 'git-merge' },
+                    { id: 'awards', label: 'Awards', icon: 'award' }
+                ]},
+                { label: 'Pro Tools', items: [
+                    { id: 'analytics', label: 'Analytics', icon: 'trending-up' },
+                    { id: 'compare', label: 'Compare', icon: 'users-2' },
+                    { id: 'roster-mgmt', label: 'Roster Mgmt', icon: 'clipboard-list' }
+                ]},
+                { label: 'Account', items: [
+                    { id: 'my-dashboard', label: 'Mijn Dashboard', icon: 'user-circle' },
+                    { id: 'players', label: 'Directory', icon: 'book-open' }
+                ]}
             ];
-            document.getElementById('nav-menu').innerHTML = menu.map(item => `
-                <a href="#" onclick="navigate('${item.id}')"
-                   class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
-                   ${AppState.currentView === item.id ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}">
-                    <i data-lucide="${item.icon}" class="w-5 h-5 shrink-0"></i><span class="hidden lg:block">${item.label}</span>
-                </a>`).join('');
+
+            let html = '';
+            sections.forEach(sec => {
+                html += `<div class="mt-4 mb-1 px-4 hidden lg:block text-[9px] font-black uppercase text-muted-foreground tracking-[0.2em]">${sec.label}</div>`;
+                sec.items.forEach(item => {
+                    const active = AppState.currentView === item.id;
+                    html += `
+                    <a href="#" onclick="navigate('${item.id}')"
+                       class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all mb-0.5
+                       ${active ? 'bg-papaya/10 text-papaya shadow-[inset_0_0_0_1px_rgba(255,215,0,0.1)]' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}">
+                        <i data-lucide="${item.icon}" class="w-5 h-5 shrink-0"></i><span class="hidden lg:block">${item.label}</span>
+                    </a>`;
+                });
+            });
+            document.getElementById('nav-menu').innerHTML = html;
 
             if (CurrentUser.isAdmin) {
                 document.getElementById('nav-admin').innerHTML = `
+                <div class="mb-1 px-4 hidden lg:block text-[9px] font-black uppercase text-muted-foreground tracking-[0.2em]">System</div>
                 <a href="#" onclick="navigate('admin')"
-                   class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all
+                   class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all mb-0.5
                    ${AppState.currentView === 'admin' ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}">
                     <i data-lucide="settings" class="w-5 h-5 shrink-0"></i><span class="hidden lg:block">Admin Panel</span>
+                </a>
+                <a href="#" onclick="navigate('db-console')"
+                   class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all
+                   ${AppState.currentView === 'db-console' ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}">
+                    <i data-lucide="database" class="w-5 h-5 shrink-0"></i><span class="hidden lg:block">DB Console</span>
                 </a>`;
             } else {
                 document.getElementById('nav-admin').innerHTML = '';
@@ -416,6 +467,11 @@
                             </div>
                         </div>
                         <div class="bg-card border border-border p-6 rounded-2xl">
+                            <i data-lucide="calendar-days" class="w-8 h-8 text-green-500 mb-4"></i>
+                            <h3 class="font-bold mb-2">Season Control</h3>
+                            <button onclick="navigate('season-mgmt')" class="w-full py-2.5 bg-secondary hover:bg-white/5 rounded-lg text-xs font-bold transition-colors">Manage Seasons</button>
+                        </div>
+                        <div class="bg-card border border-border p-6 rounded-2xl">
                             <i data-lucide="users" class="w-8 h-8 text-blue-500 mb-4"></i>
                             <h3 class="font-bold mb-2">Team & Roster</h3>
                             <div class="flex gap-2">
@@ -424,6 +480,30 @@
                             </div>
                         </div>
                     </div>
+                </div>`);
+        }
+
+        async function viewSeasonManagement() {
+            const seasons = await api.call('Season_list');
+            const list = seasons.map(s => `
+                <div class="bg-card border border-border p-5 rounded-2xl flex items-center justify-between mb-4 group">
+                    <div>
+                        <h4 class="font-black text-lg">${s.name}</h4>
+                        <p class="text-xs text-muted-foreground">${s.start_date} - ${s.end_date}</p>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <span class="text-[10px] font-black uppercase px-2 py-1 rounded ${s.status === 'Active' ? 'bg-green-500/10 text-green-400' : 'bg-secondary text-muted-foreground'}">${s.status}</span>
+                        <button class="p-2 bg-secondary text-muted-foreground rounded-lg hover:text-papaya"><i data-lucide="archive" class="w-4 h-4"></i></button>
+                    </div>
+                </div>`).join('');
+
+            setView(`
+                <div class="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
+                    <div class="flex justify-between items-center">
+                        <h1 class="text-3xl font-black">Season Management</h1>
+                        <button onclick="Toast.show('Functionality coming soon', 'info')" class="px-4 py-2 bg-papaya text-black text-xs font-bold rounded-md">Setup New Season</button>
+                    </div>
+                    <div class="space-y-4">${list || '<p class="text-center py-20 text-muted-foreground italic">No seasons found.</p>'}</div>
                 </div>`);
         }
 
@@ -543,12 +623,17 @@
         }
 
         async function viewPlayerStats(playerId) {
-            const [player, teams, events] = await Promise.all([ api.call('Player_get', playerId), api.call('Team_list'), api.call('GameEvent_list') ]);
+            const [player, teams, events] = await Promise.all([ api.call('Player_get', playerId), api.call('Team_list'), api.call('GameEvent_all') ]);
             const team = teams.find(t => t.id === player.current_team_id);
             const level = getLevel(player.xp);
 
             let goals = 0, assists = 0;
-            events.forEach(e => { if(e.event_type === 'Goal' && e.player_id === playerId) goals++; });
+            events.forEach(e => {
+                if (e.event_type === 'Goal') {
+                    if (e.player_id === playerId) goals++;
+                    if (e.assist1_player_id === playerId || e.assist2_player_id === playerId) assists++;
+                }
+            });
 
             setView(`
                 <div class="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
@@ -689,43 +774,50 @@
         // 5. STANDARD VIEWS (UPGRADED)
         // ==========================================
         async function viewStats(sortKey) {
-            const [players, teams, events, games] = await Promise.all([ api.call('Player_list'), api.call('Team_list'), api.call('GameEvent_list'), api.call('Game_list') ]);
-            const tm = Object.fromEntries(teams.map(t => [t.id, t]));
-            const relevant = players.filter(p => !p.current_team_id || (tm[p.current_team_id] && tm[p.current_team_id].league_id === AppState.currentLeagueId));
+            if (!sortKey || !AppState.cachedStats) {
+                const [players, teams, events, games] = await Promise.all([ api.call('Player_list'), api.call('Team_list'), api.call('GameEvent_all'), api.call('Game_list') ]);
+                const tm = Object.fromEntries(teams.map(t => [t.id, t]));
+                const relevant = players.filter(p => !p.current_team_id || (tm[p.current_team_id] && tm[p.current_team_id].league_id === AppState.currentLeagueId));
 
-            const sm = {};
-            relevant.forEach(p => sm[p.id] = { ...p, gp: 0, g:0, a:0, pts:0, shots_against:0, goals_against:0, wins:0, shutouts:0 });
+                const sm = {};
+                relevant.forEach(p => sm[p.id] = { ...p, gp: 0, g:0, a:0, pts:0, shots_against:0, goals_against:0, wins:0, shutouts:0, team: tm[p.current_team_id] });
 
-            const leagueGames = games.filter(g => g.league_id === AppState.currentLeagueId);
+                const leagueGames = games.filter(g => g.league_id === AppState.currentLeagueId);
 
-            const rsvps = await api.call('RSVP_list');
-            leagueGames.forEach(g => {
-                if (g.status !== 'Final') return;
-                const activeInGame = rsvps.filter(r => r.game_id === g.id && r.status === 'Active').map(r => r.player_id);
-                activeInGame.forEach(pid => { if (sm[pid]) sm[pid].gp++; });
+                const rsvps = await api.call('RSVP_list');
+                leagueGames.forEach(g => {
+                    if (g.status !== 'Final') return;
+                    const activeInGame = rsvps.filter(r => r.game_id === g.id && r.status === 'Active').map(r => r.player_id);
+                    activeInGame.forEach(pid => { if (sm[pid]) sm[pid].gp++; });
 
-                const homeGoalie = relevant.find(p => p.current_team_id === g.home_team_id && p.position === 'G');
-                const awayGoalie = relevant.find(p => p.current_team_id === g.away_team_id && p.position === 'G');
-                if (homeGoalie && sm[homeGoalie.id]) { if (g.home_score > g.away_score) sm[homeGoalie.id].wins++; if (g.away_score === 0) sm[homeGoalie.id].shutouts++; }
-                if (awayGoalie && sm[awayGoalie.id]) { if (g.away_score > g.home_score) sm[awayGoalie.id].wins++; if (g.home_score === 0) sm[awayGoalie.id].shutouts++; }
-            });
+                    const homeGoalie = relevant.find(p => p.current_team_id === g.home_team_id && p.position === 'G');
+                    const awayGoalie = relevant.find(p => p.current_team_id === g.away_team_id && p.position === 'G');
+                    if (homeGoalie && sm[homeGoalie.id]) { if (g.home_score > g.away_score) sm[homeGoalie.id].wins++; if (g.away_score === 0) sm[homeGoalie.id].shutouts++; }
+                    if (awayGoalie && sm[awayGoalie.id]) { if (g.away_score > g.home_score) sm[awayGoalie.id].wins++; if (g.home_score === 0) sm[awayGoalie.id].shutouts++; }
+                });
 
-            events.forEach(e => {
-                if (e.event_type === 'Goal' && sm[e.player_id]) { sm[e.player_id].g++; sm[e.player_id].pts++; }
-                if (e.event_type === 'Goal' || e.event_type === 'Shot') {
-                    const g = leagueGames.find(game => game.id === e.game_id);
-                    if (g) {
-                        const targetTeam = e.team_id === g.home_team_id ? g.away_team_id : g.home_team_id;
-                        const goalie = relevant.find(p => p.current_team_id === targetTeam && p.position === 'G');
-                        if (goalie && sm[goalie.id]) {
-                            sm[goalie.id].shots_against++;
-                            if (e.event_type === 'Goal') sm[goalie.id].goals_against++;
+                events.forEach(e => {
+                    if (e.event_type === 'Goal') {
+                        if (sm[e.player_id]) { sm[e.player_id].g++; sm[e.player_id].pts++; }
+                        if (sm[e.assist1_player_id]) { sm[e.assist1_player_id].a++; sm[e.assist1_player_id].pts++; }
+                        if (sm[e.assist2_player_id]) { sm[e.assist2_player_id].a++; sm[e.assist2_player_id].pts++; }
+                    }
+                    if (e.event_type === 'Goal' || e.event_type === 'Shot') {
+                        const g = leagueGames.find(game => game.id === e.game_id);
+                        if (g) {
+                            const targetTeam = e.team_id === g.home_team_id ? g.away_team_id : g.home_team_id;
+                            const goalie = relevant.find(p => p.current_team_id === targetTeam && p.position === 'G');
+                            if (goalie && sm[goalie.id]) {
+                                sm[goalie.id].shots_against++;
+                                if (e.event_type === 'Goal') sm[goalie.id].goals_against++;
+                            }
                         }
                     }
-                }
-            });
+                });
+                AppState.cachedStats = Object.values(sm);
+            }
 
-            let sorted = Object.values(sm);
+            let sorted = [...AppState.cachedStats];
             if (sortKey) sorted = sortData(sorted, sortKey);
             else sorted = sorted.sort((a,b) => b.pts - a.pts);
 
@@ -796,6 +888,415 @@
             setView(`<div class="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500"><div class="flex justify-between items-center"><h1 class="text-3xl font-black">Schedule</h1>${CurrentUser.isAdmin ? `<button onclick="openGameModal()" class="px-4 py-2 bg-primary text-primary-foreground text-xs font-bold rounded-md">New Game</button>` : ''}</div><div>${list}</div></div>`);
         }
 
+        async function viewMyDashboard() {
+            const players = await api.call('Player_list');
+            const me = players.find(p => p.email === CurrentUser.email) || players[0]; // Fallback to p1 for demo
+            const teams = await api.call('Team_list');
+            const games = await api.call('Game_filter', { league_id: AppState.currentLeagueId });
+            const rsvps = await api.call('RSVP_filter', { player_id: me.id });
+            const myTeam = teams.find(t => t.id === me.current_team_id);
+
+            const upcoming = games.filter(g => (g.home_team_id === me.current_team_id || g.away_team_id === me.current_team_id) && g.status === 'Scheduled').slice(0, 3);
+            const rsvpMap = Object.fromEntries(rsvps.map(r => [r.game_id, r.status]));
+
+            const list = upcoming.map(g => {
+                const vs = g.home_team_id === me.current_team_id ? teams.find(t => t.id === g.away_team_id) : teams.find(t => t.id === g.home_team_id);
+                const status = rsvpMap[g.id] || 'Pending';
+                const statusColor = { 'Active': 'text-green-400 bg-green-400/10', 'Out': 'text-red-400 bg-red-400/10', 'Pending': 'text-orange-400 bg-orange-400/10' }[status];
+                return `
+                <div class="bg-card border border-border p-4 rounded-xl flex items-center justify-between">
+                    <div>
+                        <p class="font-black text-sm">${new Date(g.scheduled_date).toLocaleDateString()} @ ${new Date(g.scheduled_date).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</p>
+                        <p class="text-xs text-muted-foreground">vs ${vs?.name}</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-[10px] font-black uppercase px-2 py-1 rounded ${statusColor}">${status}</span>
+                        <div class="flex gap-1">
+                            <button onclick="updateRosterStatus('${g.id}', '${me.id}', 'Active'); navigate('my-dashboard')" class="p-1.5 bg-green-500/20 text-green-400 rounded hover:bg-green-500/30 transition-colors"><i data-lucide="check" class="w-3.5 h-3.5"></i></button>
+                            <button onclick="updateRosterStatus('${g.id}', '${me.id}', 'Out'); navigate('my-dashboard')" class="p-1.5 bg-red-500/20 text-red-400 rounded hover:bg-red-500/30 transition-colors"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+
+            setView(`
+                <div class="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
+                    <div class="bg-card border border-border rounded-3xl p-8 flex items-center gap-8 relative overflow-hidden">
+                        <div class="absolute -right-10 -top-10 w-40 h-40 bg-papaya/5 rounded-full blur-3xl"></div>
+                        <div class="w-24 h-24 rounded-2xl flex items-center justify-center text-5xl font-black text-papaya bg-papaya/10 shadow-2xl border border-papaya/20">${me.jersey_number||'?'}</div>
+                        <div class="flex-1">
+                            <p class="text-[10px] font-black text-papaya uppercase tracking-[0.3em] mb-1">Mijn Dashboard</p>
+                            <h1 class="text-3xl font-black">${me.first_name} ${me.last_name}</h1>
+                            <p class="text-sm text-muted-foreground font-bold mt-1 uppercase tracking-widest">${me.position} · ${myTeam?.name || 'Vrij Speler'}</p>
+                        </div>
+                    </div>
+
+                    <div class="grid md:grid-cols-2 gap-8">
+                        <div class="space-y-4">
+                            <h3 class="text-lg font-black flex items-center gap-2"><i data-lucide="calendar" class="w-5 h-5 text-papaya"></i> Aankomende Wedstrijden</h3>
+                            <div class="space-y-3">${list || '<p class="text-center py-10 text-muted-foreground text-sm italic">Geen wedstrijden gepland.</p>'}</div>
+                        </div>
+                        <div class="space-y-4">
+                            <h3 class="text-lg font-black flex items-center gap-2"><i data-lucide="zap" class="w-5 h-5 text-papaya"></i> XP Voortgang</h3>
+                            <div class="bg-card border border-border p-6 rounded-2xl space-y-4 shadow-xl">
+                                <div class="flex justify-between items-end">
+                                    <div><p class="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Niveau ${getLevel(me.xp)}</p><p class="text-xl font-black">${LEVEL_NAMES[getLevel(me.xp)]}</p></div>
+                                    <div class="text-right"><p class="text-2xl font-black text-papaya">${me.xp||0}</p><p class="text-[9px] font-black uppercase text-muted-foreground">Total XP</p></div>
+                                </div>
+                                <div class="h-3 bg-secondary rounded-full overflow-hidden border border-white/5"><div class="h-full xp-gradient transition-all duration-1000" style="width: ${getXpProgress(me.xp)}%"></div></div>
+                                <p class="text-[10px] text-center text-muted-foreground font-medium italic">Volgend niveau bij ${XP_THRESHOLDS[getLevel(me.xp)+1] || 'MAX'} XP</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>`);
+        }
+
+        async function viewCompare() {
+            const players = await api.call('Player_list');
+            const sorted = players.sort((a,b) => a.last_name.localeCompare(b.last_name));
+
+            const renderStatRow = (label, val1, val2) => {
+                const best = parseFloat(val1) > parseFloat(val2) ? 1 : parseFloat(val2) > parseFloat(val1) ? 2 : 0;
+                return `
+                <div class="grid grid-cols-3 gap-4 py-3 border-b border-white/5 items-center">
+                    <div class="text-right font-black text-sm ${best === 1 ? 'text-papaya' : 'text-muted-foreground'}">${val1}</div>
+                    <div class="text-center text-[10px] font-black uppercase text-muted-foreground tracking-widest">${label}</div>
+                    <div class="text-left font-black text-sm ${best === 2 ? 'text-papaya' : 'text-muted-foreground'}">${val2}</div>
+                </div>`;
+            };
+
+            const updateComparison = (id1, id2) => {
+                const p1 = players.find(p => p.id === id1) || players[0];
+                const p2 = players.find(p => p.id === id2) || (players.length > 1 ? players[1] : players[0]);
+                if (!p1 || !p2) { document.getElementById('compare-output').innerHTML = '<p class="text-center py-10 text-muted-foreground font-bold">Niet genoeg spelers om te vergelijken.</p>'; return; }
+                const html = `
+                <div class="grid grid-cols-3 gap-8 mb-10">
+                    <div class="text-center space-y-3">
+                        <div class="w-20 h-20 rounded-2xl bg-secondary mx-auto flex items-center justify-center text-3xl font-black border border-white/5">${p1.jersey_number||'?'}</div>
+                        <h4 class="font-black text-lg">${p1.first_name[0]}. ${p1.last_name}</h4>
+                    </div>
+                    <div class="flex items-center justify-center"><div class="w-10 h-10 rounded-full bg-papaya/10 text-papaya flex items-center justify-center font-black italic text-xs">VS</div></div>
+                    <div class="text-center space-y-3">
+                        <div class="w-20 h-20 rounded-2xl bg-secondary mx-auto flex items-center justify-center text-3xl font-black border border-white/5">${p2.jersey_number||'?'}</div>
+                        <h4 class="font-black text-lg">${p2.first_name[0]}. ${p2.last_name}</h4>
+                    </div>
+                </div>
+                <div class="space-y-1">
+                    ${renderStatRow('Level', getLevel(p1.xp), getLevel(p2.xp))}
+                    ${renderStatRow('Experience', p1.xp||0, p2.xp||0)}
+                    ${renderStatRow('Jersey', p1.jersey_number||0, p2.jersey_number||0)}
+                    ${renderStatRow('Position Score', p1.position === p2.position ? 1 : 0, p1.position === p2.position ? 1 : 0)}
+                </div>`;
+                document.getElementById('compare-output').innerHTML = html;
+            };
+
+            const options = sorted.map(p => `<option value="${p.id}">${p.first_name} ${p.last_name}</option>`).join('');
+
+            setView(`
+                <div class="max-w-2xl mx-auto space-y-8 animate-in fade-in duration-500">
+                    <h1 class="text-3xl font-black">Speler Vergelijker</h1>
+                    <div class="grid grid-cols-2 gap-4">
+                        <select onchange="window.compareP1 = this.value; window.refreshComparison()" class="bg-card border border-border p-3 rounded-xl text-sm outline-none focus:ring-1 focus:ring-papaya/50">
+                            ${options}
+                        </select>
+                        <select onchange="window.compareP2 = this.value; window.refreshComparison()" class="bg-card border border-border p-3 rounded-xl text-sm outline-none focus:ring-1 focus:ring-papaya/50">
+                            ${options}
+                        </select>
+                    </div>
+                    <div id="compare-output" class="bg-card border border-border p-8 rounded-3xl shadow-2xl"></div>
+                </div>`);
+
+            window.compareP1 = sorted[0]?.id;
+            window.compareP2 = sorted[1]?.id;
+            window.refreshComparison = () => updateComparison(window.compareP1, window.compareP2);
+            window.refreshComparison();
+        }
+
+        async function viewAnalytics() {
+            const [events, games, players] = await Promise.all([ api.call('GameEvent_all'), api.call('Game_list'), api.call('Player_list') ]);
+            const leagueGames = games.filter(g => g.league_id === AppState.currentLeagueId);
+            const lgEvents = events.filter(e => leagueGames.find(g => g.id === e.game_id));
+
+            const goalCount = lgEvents.filter(e => e.event_type === 'Goal').length;
+            const penaltyCount = lgEvents.filter(e => e.event_type === 'Penalty').length;
+
+            // Calculate real trend: goals per week
+            const weekGoals = {};
+            leagueGames.forEach(g => {
+                if (!g.scheduled_date) return;
+                const date = new Date(g.scheduled_date);
+                const weekNum = Math.ceil((date.getDate() + date.getDay()) / 7); // Simplified week of month
+                const month = date.toLocaleString('default', { month: 'short' });
+                const key = `${month} W${weekNum}`;
+                const gEvents = lgEvents.filter(e => e.game_id === g.id && e.event_type === 'Goal');
+                weekGoals[key] = (weekGoals[key] || 0) + gEvents.length;
+            });
+
+            const trendKeys = Object.keys(weekGoals).sort((a, b) => new Date(a) - new Date(b)).slice(-7);
+            const maxGoals = Math.max(...Object.values(weekGoals), 1);
+            const trend = trendKeys.length > 0 ? trendKeys.map(k => `
+                <div class="flex-1 flex flex-col items-center justify-end group">
+                    <div class="w-full bg-papaya/20 group-hover:bg-papaya/40 rounded-t-sm transition-all" style="height: ${(weekGoals[k]/maxGoals)*100}px"></div>
+                    <span class="text-[8px] font-black mt-2 text-muted-foreground uppercase">${k}</span>
+                </div>`).join('') : '<p class="text-center w-full text-muted-foreground text-xs italic">Not enough game data for trend.</p>';
+
+            setView(`
+                <div class="max-w-5xl mx-auto space-y-8 animate-in fade-in duration-500">
+                    <h1 class="text-3xl font-black">League Analytics</h1>
+                    <div class="grid md:grid-cols-3 gap-6">
+                        <div class="bg-card border border-border p-8 rounded-3xl text-center"><p class="text-[10px] font-black uppercase text-muted-foreground tracking-widest mb-2">Total Goals</p><p class="text-5xl font-black text-papaya">${goalCount}</p></div>
+                        <div class="bg-card border border-border p-8 rounded-3xl text-center"><p class="text-[10px] font-black uppercase text-muted-foreground tracking-widest mb-2">Penalties</p><p class="text-5xl font-black text-red-500">${penaltyCount}</p></div>
+                        <div class="bg-card border border-border p-8 rounded-3xl text-center"><p class="text-[10px] font-black uppercase text-muted-foreground tracking-widest mb-2">Avg Goals/Game</p><p class="text-5xl font-black">${(goalCount/(games.length||1)).toFixed(1)}</p></div>
+                    </div>
+                    <div class="bg-card border border-border p-10 rounded-3xl">
+                        <h3 class="text-sm font-black uppercase tracking-widest mb-10 text-center">Scoring Trend (Weekly)</h3>
+                        <div class="h-40 flex items-end gap-2 px-10">${trend}</div>
+                    </div>
+                </div>`);
+        }
+
+        async function viewAwards() {
+            const [players, events, games] = await Promise.all([ api.call('Player_list'), api.call('GameEvent_all'), api.call('Game_list') ]);
+            if (!players || players.length === 0) return setView('<p class="text-center py-20 text-muted-foreground">No players found to calculate awards.</p>');
+            const sm = {};
+            players.forEach(p => sm[p.id] = { ...p, g:0, a:0, pts:0 });
+            events.forEach(e => {
+                if (e.event_type === 'Goal') {
+                    if (sm[e.player_id]) { sm[e.player_id].g++; sm[e.player_id].pts++; }
+                    if (sm[e.assist1_player_id]) { sm[e.assist1_player_id].a++; sm[e.assist1_player_id].pts++; }
+                    if (sm[e.assist2_player_id]) { sm[e.assist2_player_id].a++; sm[e.assist2_player_id].pts++; }
+                }
+            });
+
+            const leaders = Object.values(sm).sort((a,b) => b.pts - a.pts).slice(0, 3);
+            const awardCards = leaders.map((p, i) => {
+                if (!p) return '';
+                return `
+                <div class="bg-card border-2 ${i===0 ? 'border-papaya' : 'border-border'} p-8 rounded-3xl text-center relative overflow-hidden group">
+                    ${i === 0 ? '<div class="absolute top-4 right-4"><i data-lucide="crown" class="w-6 h-6 text-papaya animate-bounce"></i></div>' : ''}
+                    <div class="w-20 h-20 rounded-full mx-auto mb-6 flex items-center justify-center text-3xl font-black bg-secondary shadow-2xl">${p.jersey_number||'?'}</div>
+                    <h3 class="font-black text-xl mb-1">${p.first_name} ${p.last_name}</h3>
+                    <p class="text-[10px] font-black uppercase text-papaya tracking-[0.2em] mb-6">${i === 0 ? 'LEAGUE MVP' : i === 1 ? 'TOP SCORER' : 'ALL-STAR'}</p>
+                    <div class="flex justify-center gap-4 border-t border-white/5 pt-6">
+                        <div><p class="text-xs text-muted-foreground uppercase font-black">Points</p><p class="text-xl font-black">${p.pts}</p></div>
+                        <div class="w-px h-8 bg-border"></div>
+                        <div><p class="text-xs text-muted-foreground uppercase font-black">Goals</p><p class="text-xl font-black">${p.g}</p></div>
+                    </div>
+                `;
+            }).join('');
+
+            setView(`<div class="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500"><h1 class="text-3xl font-black">League Awards</h1><div class="grid md:grid-cols-3 gap-8">${awardCards}</div></div>`);
+        }
+
+        async function viewArchive() {
+            const games = await api.call('Game_filter', { league_id: AppState.currentLeagueId, status: 'Final' });
+            const teams = await api.call('Team_list');
+            const tm = Object.fromEntries(teams.map(t => [t.id, t]));
+
+            const list = games.map(g => `
+                <div class="bg-card border border-border p-5 rounded-2xl flex items-center justify-between mb-4 group hover:border-papaya/30 transition-all">
+                    <div class="flex items-center gap-6">
+                        <div class="text-center pr-6 border-r border-border min-w-[80px]">
+                            <p class="font-black text-sm">${new Date(g.scheduled_date).toLocaleDateString()}</p>
+                            <p class="text-[9px] font-black uppercase text-muted-foreground mt-1 tracking-widest">${g.game_type}</p>
+                        </div>
+                        <div>
+                            <p class="font-black text-lg">${tm[g.home_team_id]?.short_name} ${g.home_score} - ${g.away_score} ${tm[g.away_team_id]?.short_name}</p>
+                            <p class="text-xs text-muted-foreground">${g.venue}</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onclick="navigate('gameAnalysis', '${g.id}')" class="p-2 bg-secondary text-muted-foreground rounded-lg hover:text-papaya"><i data-lucide="line-chart" class="w-4 h-4"></i></button>
+                        <button onclick="window.print()" class="p-2 bg-secondary text-muted-foreground rounded-lg hover:text-papaya"><i data-lucide="file-text" class="w-4 h-4"></i></button>
+                    </div>
+                </div>`).join('');
+
+            setView(`<div class="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500"><h1 class="text-3xl font-black">Game Sheet Archive</h1><div class="space-y-4">${list || '<p class="text-center py-20 text-muted-foreground">No archived games found.</p>'}</div></div>`);
+        }
+
+        async function viewDbConsole() {
+            const tables = ['League', 'Team', 'Player', 'Game', 'GameEvent', 'Division', 'User', 'Season'];
+            const renderTable = async (name) => {
+                const data = await api.call(name + '_list');
+                const headers = data.length > 0 ? Object.keys(data[0]) : [];
+                return `
+                <div class="space-y-4">
+                    <h3 class="font-black text-papaya uppercase tracking-widest text-xs">${name} Records</h3>
+                    <div class="bg-card border border-border rounded-xl overflow-x-auto">
+                        <table class="w-full text-[10px]">
+                            <thead class="bg-secondary/50 text-muted-foreground uppercase font-black">
+                                <tr>${headers.map(h => `<th class="p-3 text-left">${h}</th>`).join('')}<th class="p-3"></th></tr>
+                            </thead>
+                            <tbody>
+                                ${data.map(row => `
+                                <tr class="border-t border-white/5 hover:bg-white/5">
+                                    ${headers.map(h => `<td class="p-3 truncate max-w-[150px]">${row[h]}</td>`).join('')}
+                                    <td class="p-3 text-right"><button onclick="deleteRecord('${name}', '${row.id}')" class="text-red-500 hover:text-red-400 p-1"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i></button></td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>`;
+            };
+
+            window.deleteRecord = async (table, id) => {
+                if(!confirm('Are you sure?')) return;
+                await api.call('Admin_RecordDelete', table, id);
+                Toast.show('Record deleted', 'success');
+                viewDbConsole();
+            };
+
+            const html = (await Promise.all(tables.map(t => renderTable(t)))).join('<div class="h-10"></div>');
+            setView(`<div class="max-w-6xl mx-auto space-y-10 animate-in fade-in duration-500"><h1 class="text-3xl font-black">Database Console</h1><div class="pb-20">${html}</div></div>`);
+        }
+
+        async function viewRosterManagement() {
+            const [teams, players, games] = await Promise.all([
+                api.call('Team_filter', { league_id: AppState.currentLeagueId }),
+                api.call('Player_list'),
+                api.call('Game_filter', { league_id: AppState.currentLeagueId, status: 'Scheduled' })
+            ]);
+
+            if (games.length === 0) return setView(`<div class="flex flex-col items-center justify-center h-full text-muted-foreground"><i data-lucide="clipboard-list" class="w-12 h-12 mb-4 opacity-20"></i><p class="font-bold">No upcoming games to manage lineups for.</p></div>`);
+
+            const game = games[0];
+            const h = teams.find(t => t.id === game.home_team_id);
+            const a = teams.find(t => t.id === game.away_team_id);
+
+            const renderLineupEditor = async (team) => {
+                if(!team) return '';
+                const teamPlayers = players.filter(p => p.current_team_id === team.id);
+                const lineupRes = await api.call('Lineup_get', game.id, team.id);
+                const lines = lineupRes ? JSON.parse(lineupRes.lineup_json) : { L1: [], L2: [], G: [] };
+
+                return `
+                <div class="bg-card border border-border rounded-3xl p-6 space-y-6">
+                    <div class="flex items-center gap-3 border-b border-white/5 pb-4">
+                        <div class="w-10 h-10 rounded-xl flex items-center justify-center text-white font-black" style="background:${team.color}">${team.short_name[0]}</div>
+                        <h3 class="font-black uppercase tracking-widest">${team.name}</h3>
+                    </div>
+
+                    <div class="space-y-4">
+                        ${['G', 'L1', 'L2'].map(line => `
+                            <div class="space-y-2">
+                                <p class="text-[9px] font-black text-papaya uppercase tracking-widest">${line === 'G' ? 'Goalies' : 'Line ' + line.slice(1)}</p>
+                                <div class="min-h-[40px] bg-secondary/20 rounded-xl border border-dashed border-white/10 p-2 flex flex-wrap gap-2">
+                                    ${lines[line].map(pid => {
+                                        const p = players.find(x => x.id === pid);
+                                        return `<span class="bg-secondary px-2 py-1 rounded text-[10px] font-bold">#${p?.jersey_number} ${p?.last_name}</span>`;
+                                    }).join('') || '<span class="text-[9px] text-muted-foreground px-2">Empty</span>'}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <button onclick="openLineupModal('${game.id}', '${team.id}')" class="w-full py-2 bg-secondary hover:bg-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors">Edit Lineup</button>
+                </div>`;
+            };
+
+            const lineupGrid = (await Promise.all([renderLineupEditor(h), renderLineupEditor(a)])).join('');
+            setView(`
+                <div class="max-w-6xl mx-auto space-y-8 animate-in fade-in duration-500">
+                    <div class="flex justify-between items-center">
+                        <h1 class="text-3xl font-black">Line Management</h1>
+                        <div class="bg-secondary px-4 py-2 rounded-full text-xs font-bold text-muted-foreground">${new Date(game.scheduled_date).toLocaleDateString()} Match</div>
+                    </div>
+                    <div class="grid md:grid-cols-2 gap-8">${lineupGrid}</div>
+                </div>`);
+        }
+
+        async function openLineupModal(gameId, teamId) {
+            const [players, lineupRes] = await Promise.all([ api.call('Player_list'), api.call('Lineup_get', gameId, teamId) ]);
+            const teamPlayers = players.filter(p => p.current_team_id === teamId);
+            const current = lineupRes ? JSON.parse(lineupRes.lineup_json) : { L1: [], L2: [], G: [] };
+
+            const body = `
+                <div class="space-y-6">
+                    ${['G', 'L1', 'L2'].map(line => `
+                        <div>
+                            <label class="block text-[10px] font-black uppercase text-muted-foreground tracking-widest mb-2">${line === 'G' ? 'Goalies' : 'Line ' + line.slice(1)}</label>
+                            <select id="sel-${line}" multiple class="w-full bg-secondary border border-border rounded-xl p-3 text-xs h-24 outline-none focus:ring-1 focus:ring-papaya/50">
+                                ${teamPlayers.map(p => `<option value="${p.id}" ${current[line].includes(p.id) ? 'selected' : ''}>#${p.jersey_number} ${p.last_name}</option>`).join('')}
+                            </select>
+                        </div>
+                    `).join('')}
+                </div>`;
+
+            const footer = `<button onclick="closeModal()" class="px-5 py-2 text-xs font-bold text-muted-foreground">Cancel</button>
+                <button onclick="saveLineup('${gameId}', '${teamId}')" class="px-5 py-2 bg-papaya text-black text-xs font-bold rounded-md">Save Lineup</button>`;
+
+            showModal('Assign Lines', body, footer);
+        }
+
+        async function saveLineup(gameId, teamId) {
+            const getSelected = (id) => Array.from(document.getElementById(id).selectedOptions).map(o => o.value);
+            const lineup = {
+                G: getSelected('sel-G'),
+                L1: getSelected('sel-L1'),
+                L2: getSelected('sel-L2')
+            };
+            await api.call('Lineup_save', { game_id: gameId, team_id: teamId, lineup_json: JSON.stringify(lineup) });
+            Toast.show('Lineup saved', 'success');
+            closeModal();
+            viewRosterManagement();
+        }
+
+        async function viewGameAnalysis(gameId) {
+            const [game, events, teams, players] = await Promise.all([
+                api.call('Game_get', gameId),
+                api.call('GameEvent_filter', { game_id: gameId }),
+                api.call('Team_list'),
+                api.call('Player_list')
+            ]);
+            if (!game) return setView('<div class="flex flex-col items-center justify-center h-full text-muted-foreground"><p class="font-bold">Wedstrijd niet gevonden.</p></div>');
+            const tm = Object.fromEntries(teams.map(t => [t.id, t]));
+            const pm = Object.fromEntries(players.map(p => [p.id, p]));
+            const h = tm[game.home_team_id], a = tm[game.away_team_id];
+
+            const goals = events.filter(e => e.event_type === 'Goal');
+            const pens = events.filter(e => e.event_type === 'Penalty');
+
+            const renderEventList = (list, title, empty) => `
+                <div class="bg-card border border-border rounded-2xl p-6">
+                    <h4 class="text-[10px] font-black uppercase text-muted-foreground tracking-widest mb-4 border-b border-white/5 pb-2">${title}</h4>
+                    <div class="space-y-3">
+                        ${list.map(e => `
+                        <div class="flex justify-between items-center text-sm">
+                            <div class="flex items-center gap-3">
+                                <span class="w-8 font-mono text-[10px] text-muted-foreground">P${e.period}</span>
+                                <span class="font-bold">${pm[e.player_id]?.last_name || 'Unk'} ${e.assist1_player_id ? '(Assists: ' + pm[e.assist1_player_id]?.last_name + (e.assist2_player_id ? ', ' + pm[e.assist2_player_id]?.last_name : '') + ')' : ''}</span>
+                            </div>
+                            <span class="text-[10px] font-black ${e.event_type === 'Goal' ? 'text-papaya' : 'text-red-400'}">${e.event_type === 'Goal' ? 'G' : 'PEN'}</span>
+                        </div>`).join('') || `<p class="text-center text-[10px] text-muted-foreground py-4">${empty}</p>`}
+                    </div>
+                </div>`;
+
+            setView(`
+                <div class="max-w-4xl mx-auto space-y-8 animate-in fade-in duration-500">
+                    <button onclick="navigate('archive')" class="flex items-center gap-2 text-xs font-bold text-muted-foreground hover:text-white transition-colors"><i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> Back to Archive</button>
+
+                    <div class="bg-card border border-border rounded-3xl p-10 text-center shadow-2xl relative overflow-hidden">
+                        <div class="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none"></div>
+                        <p class="text-[10px] font-black uppercase text-papaya tracking-[0.4em] mb-6">Match Analysis</p>
+                        <div class="flex items-center justify-between">
+                            <div class="flex-1 text-right pr-10 border-r border-white/5">
+                                <p class="text-5xl font-black mb-2">${game.home_score}</p>
+                                <p class="font-bold uppercase tracking-widest text-muted-foreground">${h?.name}</p>
+                            </div>
+                            <div class="flex-1 text-left pl-10">
+                                <p class="text-5xl font-black mb-2">${game.away_score}</p>
+                                <p class="font-bold uppercase tracking-widest text-muted-foreground">${a?.name}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid md:grid-cols-2 gap-6">
+                        ${renderEventList(goals, 'Goal Summary', 'No goals scored.')}
+                        ${renderEventList(pens, 'Penalty Summary', 'Clean game - no penalties.')}
+                    </div>
+                </div>`);
+        }
+
         // ==========================================
         // 6. ROUTER & BOOTSTRAP
         // ==========================================
@@ -815,6 +1316,15 @@
                 else if (view === 'bracket') await viewBracket();
                 else if (view === 'teams') await viewTeams();
                 else if (view === 'schedule') await viewSchedule();
+                else if (view === 'archive') await viewArchive();
+                else if (view === 'awards') await viewAwards();
+                else if (view === 'analytics') await viewAnalytics();
+                else if (view === 'compare') await viewCompare();
+                else if (view === 'roster-mgmt') await viewRosterManagement();
+                else if (view === 'my-dashboard') await viewMyDashboard();
+                else if (view === 'db-console') await viewDbConsole();
+                else if (view === 'season-mgmt') await viewSeasonManagement();
+                else if (view === 'gameAnalysis') await viewGameAnalysis(params);
                 else await viewDashboard();
             } catch (err) { console.error(err); Toast.show(err.message, 'error'); }
             lucide.createIcons(); document.getElementById('app-view').scrollTo(0,0);

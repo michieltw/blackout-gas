@@ -14,7 +14,8 @@ const DATABASE_SCHEMA = {
   Division: ['id', 'league_id', 'name'],
   User: ['id', 'name', 'email', 'role'],
   RSVP: ['id', 'game_id', 'player_id', 'status'],
-  Season: ['id', 'league_id', 'name', 'start_date', 'end_date']
+  Season: ['id', 'league_id', 'name', 'start_date', 'end_date', 'status'],
+  Lineup: ['id', 'game_id', 'team_id', 'lineup_json']
 };
 
 /**
@@ -46,8 +47,12 @@ function doGet(e) {
 }
 
 function setupDatabase() {
-  _checkAuth('Admin');
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  // Bypass check if User sheet doesn't exist (initial setup)
+  if (ss.getSheetByName('User')) {
+    _checkAuth('Admin');
+  }
+
   for (const [sheetName, headers] of Object.entries(DATABASE_SCHEMA)) {
     let sheet = ss.getSheetByName(sheetName);
     if (!sheet) {
@@ -208,8 +213,28 @@ function GameEvent_list() {
   const all = _list('GameEvent');
   return all.slice(-50).reverse();
 }
+function GameEvent_all() { return _list('GameEvent'); }
 function GameEvent_filter(params) { return _filter('GameEvent', params); }
-function GameEvent_create(data) { _checkAuth('Scorekeeper'); return _create('GameEvent', data); }
+function GameEvent_create(data) {
+  _checkAuth('Scorekeeper');
+  const event = _create('GameEvent', data);
+
+  // Update Game score/shots automatically
+  if (data.event_type === 'Goal' || data.event_type === 'Shot') {
+    const game = _get('Game', data.game_id);
+    if (game) {
+      if (data.event_type === 'Goal') {
+        if (data.team_id === game.home_team_id) game.home_score = (Number(game.home_score) || 0) + 1;
+        else if (data.team_id === game.away_team_id) game.away_score = (Number(game.away_score) || 0) + 1;
+      }
+      if (data.team_id === game.home_team_id) game.home_shots = (Number(game.home_shots) || 0) + 1;
+      else if (data.team_id === game.away_team_id) game.away_shots = (Number(game.away_shots) || 0) + 1;
+
+      _update('Game', game);
+    }
+  }
+  return event;
+}
 function GameEvent_delete(id) { _checkAuth('Scorekeeper'); return _delete('GameEvent', id); }
 
 function Division_list() { return _list('Division'); }
@@ -231,6 +256,34 @@ function RSVP_create(data) {
 }
 
 function Season_list() { return _list('Season'); }
+function Season_create(data) { _checkAuth('Admin'); return _create('Season', data); }
+function Season_update(data) { _checkAuth('Admin'); return _update('Season', data); }
+
+function Lineup_save(data) {
+  _checkAuth('Scorekeeper');
+  const existing = _filter('Lineup', { game_id: data.game_id, team_id: data.team_id });
+  if (existing.length > 0) {
+    data.id = existing[0].id;
+    return _update('Lineup', data);
+  }
+  return _create('Lineup', data);
+}
+function Lineup_get(game_id, team_id) {
+  const res = _filter('Lineup', { game_id: game_id, team_id: team_id });
+  return res.length > 0 ? res[0] : null;
+}
+
+/**
+ * ADMIN DATABASE OVERRIDE
+ */
+function Admin_RecordUpdate(sheetName, data) {
+  _checkAuth('Admin');
+  return _update(sheetName, data);
+}
+function Admin_RecordDelete(sheetName, id) {
+  _checkAuth('Admin');
+  return _delete(sheetName, id);
+}
 
 function getDriveImageBase64(fileId) {
   try {
