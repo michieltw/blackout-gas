@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+@layer base {
+  :root {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 92%;
+    --card: 0 0% 7%;
+    --card-foreground: 0 0% 92%;
+    --popover: 0 0% 7%;
+    --popover-foreground: 0 0% 92%;
+    --primary: 37 95% 58%;
+    --primary-foreground: 0 0% 4%;
+    --secondary: 0 0% 11%;
+    --secondary-foreground: 0 0% 80%;
+    --muted: 0 0% 11%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 37 95% 58%;
+    --accent-foreground: 0 0% 4%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 13%;
+    --input: 0 0% 13%;
+    --ring: 37 95% 58%;
+    --chart-1: 37 95% 58%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 50%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.375rem;
+    --font-heading: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-display: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --sidebar-background: 0 0% 5%;
+    --sidebar-foreground: 0 0% 70%;
+    --sidebar-primary: 37 95% 58%;
+    --sidebar-primary-foreground: 0 0% 4%;
+    --sidebar-accent: 0 0% 9%;
+    --sidebar-accent-foreground: 0 0% 88%;
+    --sidebar-border: 0 0% 10%;
+    --sidebar-ring: 37 95% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: hsl(0 0% 8%); }
+::-webkit-scrollbar-thumb { background: hsl(0 0% 25%); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(45 100% 50%); }
+
+/* Glow effect for live indicators */
+@keyframes pulse-gold {
+  0%, 100% { box-shadow: 0 0 8px hsl(45 100% 50% / 0.4); }
+  50% { box-shadow: 0 0 20px hsl(45 100% 50% / 0.8); }
+}
+.pulse-gold { animation: pulse-gold 2s ease-in-out infinite; }
+
+/* Clock font */
+.font-clock { font-family: 'JetBrains Mono', monospace; font-variant-numeric: tabular-nums; }
